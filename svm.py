@@ -50,7 +50,7 @@ def KKT(i, alpha, C):
     else:
         return fabs(y_train[i] * gi - 1) < epsilon
 
-def selectI(alpha, b, C):
+def selectI(alpha, C):
     for i in range(X_train.shape[0]):
         if 0 < alpha[i] < C and not KKT(i, alpha, C):
             return i
@@ -59,13 +59,12 @@ def selectI(alpha, b, C):
             return i
     return -1
 
-def selectJ(i, Ei, E):
-    E_valid = E[np.arange(len(E)) != i]
+def selectJ(Ei, E):
     if Ei > 0:
-        j = np.argmin(E_valid)
+        j = np.argmin(E)
     else:
-        j = np.argmax(E_valid)
-    return np.where(E == E_valid[j])[0][0]
+        j = np.argmax(E)
+    return j
 
 
 def SMO(C, max_iter=1000):
@@ -82,11 +81,11 @@ def SMO(C, max_iter=1000):
     while iter < max_iter:
         print('iter:', iter)
         # 外层循环，选择违反KKT条件的点
-        i = selectI(alpha, b, C)
+        i = selectI(alpha, C)
         if i == -1:
             break
         # 内层循环，选择使|Ei - Ej|最大的点
-        j = selectJ(i, E[i], E)
+        j = selectJ(E[i], E)
         alpha_i_old = alpha[i]
         alpha_j_old = alpha[j]
         if y_train[i] != y_train[j]:
@@ -95,11 +94,13 @@ def SMO(C, max_iter=1000):
         else:
             L = max(0, alpha[j] + alpha[i] - C)
             H = min(C, alpha[j] + alpha[i])
-        if L == H:
-            continue
+        '''if L == H:
+            continue'''
         eta = K[i, i] + K[j, j] - 2*K[i, j]
-        if eta <= 0:
-            continue
+        while eta <= 0:
+            j = np.random.randint(0, X_train.shape[0])
+            eta = K[i, i] + K[j, j] - 2*K[i, j]
+            
         alpha[j] = alpha_j_old + y_train[j]*(E[i]-E[j])/eta
         if alpha[j] > H:
             alpha[j] = H
@@ -155,6 +156,7 @@ if __name__ == '__main__':
     K = parallel_compute_K(mp.cpu_count())
     E = np.zeros(X_train.shape[0])
     g = np.zeros(X_train.shape[0])
+
     alpha, b = SMO(1)
 
     w = csr_matrix((X_train.shape[1], 1))
