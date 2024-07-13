@@ -52,10 +52,10 @@ def KKT(i, alpha, C):
 
 def selectI(alpha, b, C):
     for i in range(X_train.shape[0]):
-        if 0 < alpha[i] < C and not KKT(i, alpha, b, C):
+        if 0 < alpha[i] < C and not KKT(i, alpha, C):
             return i
     for i in range(X_train.shape[0]):
-        if not KKT(i, alpha, b, C):
+        if not KKT(i, alpha, C):
             return i
     return -1
 
