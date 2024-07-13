@@ -3,6 +3,8 @@ import numpy as np
 from math import fabs
 from scipy.sparse import csr_matrix
 import multiprocessing as mp
+import time
+import os
 # 读取数据
 X_train, y_train = load_svmlight_file('madelon.txt')
 
@@ -100,7 +102,7 @@ def SMO(C, max_iter=1000):
         while eta <= 0:
             j = np.random.randint(0, X_train.shape[0])
             eta = K[i, i] + K[j, j] - 2*K[i, j]
-            
+
         alpha[j] = alpha_j_old + y_train[j]*(E[i]-E[j])/eta
         if alpha[j] > H:
             alpha[j] = H
@@ -152,12 +154,20 @@ def accuracy(y_test, y_predict):
 
 
 if __name__ == '__main__':
+    t0 = time.time()
     mp.freeze_support()
-    K = parallel_compute_K(mp.cpu_count())
+    if 'K.txt' not in os.listdir():
+        K = parallel_compute_K(mp.cpu_count())
+        # 保存K到K.txt
+        np.savetxt('K.txt', K)
+    else:
+        # 读取K
+        K = np.loadtxt('K.txt')
+
     E = np.zeros(X_train.shape[0])
     g = np.zeros(X_train.shape[0])
 
-    alpha, b = SMO(1)
+    alpha, b = SMO(1, 2000)
 
     w = csr_matrix((X_train.shape[1], 1))
     for i in range(X_train.shape[0]):
@@ -165,3 +175,4 @@ if __name__ == '__main__':
 
     y_predict = predict(w, b)
     print(accuracy(y_test, y_predict))
+    print('time:', time.time() - t0)
