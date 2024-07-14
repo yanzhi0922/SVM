@@ -34,6 +34,8 @@ def cal_K2(i, j, gamma = 1.9794151456041003e-06):
     diff = X_test[i] - X_train[j]
     return np.exp(-gamma * diff.dot(diff.T)[0, 0])
 
+
+# 并行计算
 def compute_K_chunk(indices):
     K_chunk = np.zeros((len(indices), X_train.shape[0]))
     for idx, i in enumerate(indices):
@@ -53,8 +55,6 @@ def parallel_compute_K(num_processes):
 
     K = np.vstack(results)
     return K
-
-
 
 def compute_K2_chunk(indices):
     K_chunk = np.zeros((len(indices), X_train.shape[0]))
@@ -103,13 +103,11 @@ def selectI(alpha, C):
     return -1
 '''
 # 内层循环，选择使|Ei - Ej|最大的点
-def selectJ(i, E):
-    maxE = 0
+def selectJ(i):
+    maxE = -1
     maxIndex = -1
     for j in range(X_train.shape[0]):
-        if j == i:
-            continue
-        if abs(E[i] - E[j]) > maxE and E[j] != 0:
+        if j != i and abs(E[i] - E[j]) > maxE:
             maxE = fabs(E[i] - E[j])
             maxIndex = j
 
@@ -133,7 +131,7 @@ def SMO(C, max_iter=1000):
         for i in range(X_train.shape[0]):
             if not KKT(i, alpha, C):
                 # 内层循环，选择使|Ei - Ej|最大的点
-                j = selectJ(i, E)
+                j = selectJ(i)
                 if j == -1:
                     break
 
@@ -162,12 +160,8 @@ def SMO(C, max_iter=1000):
 
                 # 更新b
                 b_old = b
-                b1 = - E[i] - y_train[i] * (alpha[i] - alpha_i_old) * K[i, i] - y_train[j] * (alpha[j] - alpha_j_old) * \
-                     K[
-                         j, i] + b_old
-                b2 = - E[j] - y_train[i] * (alpha[i] - alpha_i_old) * K[i, j] - y_train[j] * (alpha[j] - alpha_j_old) * \
-                     K[
-                         j, j] + b_old
+                b1 = - E[i] - y_train[i] * (alpha[i] - alpha_i_old) * K[i, i] - y_train[j] * (alpha[j] - alpha_j_old) * K[j, i] + b_old
+                b2 = - E[j] - y_train[i] * (alpha[i] - alpha_i_old) * K[i, j] - y_train[j] * (alpha[j] - alpha_j_old) * K[j, j] + b_old
                 if 0 < alpha[i] < C:
                     b = b1
                 elif 0 < alpha[j] < C:
@@ -192,10 +186,13 @@ def SMO(C, max_iter=1000):
 def predict(alpha, b):
     y_predict = np.zeros(X_test.shape[0])
     for i in range(X_test.shape[0]):
-        y_predict[i] = b
+        tmp = b
         for j in S:
-            y_predict[i] += alpha[j] * y_train[j] * K2[i][j]
-        y_predict[i] = 1 if y_predict[i] > 0 else -1
+            tmp += alpha[j] * y_train[j] * K2[i][j]
+        if tmp > 0:
+            y_predict[i] = 1
+        else:
+            y_predict[i] = -1
     return y_predict
 
 
@@ -213,7 +210,7 @@ if __name__ == '__main__':
     mp.freeze_support()
     if 'K_rbf.txt' not in os.listdir():
         K = parallel_compute_K(mp.cpu_count())
-        # 保存K到K.txt
+        # 保存K到txt
         np.savetxt('K_rbf.txt', K)
     else:
         # 读取K
@@ -221,15 +218,16 @@ if __name__ == '__main__':
 
     if 'K2_rbf.txt' not in os.listdir():
         K2 = parallel_compute_K2(mp.cpu_count())
-        # 保存K2到K2.txt
+        # 保存K2到txt
         np.savetxt('K2_rbf.txt', K)
     else:
-        # 读取K
+        # 读取K2
         K2 = np.loadtxt('K2_rbf.txt')
+
     E = np.zeros(X_train.shape[0])
     g = np.zeros(X_train.shape[0])
 
-    alpha, b, S = SMO(10, 2000)
+    alpha, b, S = SMO(10, 4920)
 
     y_predict = predict(alpha, b)
     print(accuracy(y_test, y_predict))
