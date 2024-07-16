@@ -1,18 +1,26 @@
 from sklearn.datasets import load_svmlight_file
 from sklearn.svm import SVC
 import numpy as np
+import time
 # 读取数据
-X_train, y_train = load_svmlight_file('madelon.txt')
-X_test, y_test = load_svmlight_file('madelon.t')
+X, Y = load_svmlight_file('german.numer_scale.txt')
+X = X.toarray()
+#划分70%做训练集
+X_train = X[:int(0.7 * X.shape[0])]
+y_train = Y[:int(0.7 * Y.shape[0])]
+
+# 30%做测试集
+X_test = X[int(0.7 * X.shape[0]):]
+y_test = Y[int(0.7 * Y.shape[0]):]
 epsilon = 0.001
-
+t0 = time.time()
 from sklearn.model_selection import GridSearchCV
-
+'''
 # 定义参数网格
 param_grid = {
-    'C': [0.1, 1, 10, 100],
+    'C': [10],
     'gamma': ['scale', 'auto'],
-    'kernel': ['rbf', 'linear', 'poly', 'sigmoid']
+    'kernel': ['rbf']
 }
 
 # 创建GridSearchCV对象
@@ -32,3 +40,12 @@ y_pred = best_model.predict(X_test)
 # 计算准确率
 accuracy = np.sum(y_pred == y_test) / y_test.shape[0]
 print('accuracy:', accuracy)
+'''
+model = SVC(C=10, gamma=1/X_train.shape[1], kernel='rbf', max_iter=4000) # gamma = scale,表示
+gamma = 1 / X_train.shape[1]
+print(gamma)
+model.fit(X_train, y_train)
+y_pred = model.predict(X_test)
+accuracy = np.sum(y_pred == y_test) / y_test.shape[0]
+print('accuracy:', accuracy)
+print(f'Time: {time.time() - t0:.2f}s')
