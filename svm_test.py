@@ -9,27 +9,27 @@ class SVM:
     SVM类
     """
 
-    def __init__(self, trainDataList, trainLabelList, gamma=10.0, C=20000.0, toler=0.0, maxIter=100):
+    def __init__(self, trainDataList, trainLabelList, gamma=10.0, C=20000.0, epsilon=0.0, maxIter=100):
         """
         SVM相关参数初始化
         :param trainDataList:训练数据集
         :param trainLabelList: 训练测试集
         :param gamma: RBF核函数中的γ
         :param C:软间隔中的惩罚参数 对于硬间隔支持向量机，设置为一个较大的数
-        :param toler:松弛变量 对于硬间隔支持向量机 设置为0
+        :param epsilon:松弛变量 对于硬间隔支持向量机 设置为0
         """
         self.trainDataMat = np.asmatrix(trainDataList)  # 训练数据集
-        self.trainLabelMat = np.asmatrix(trainLabelList).T  # 训练标签集，为了方便后续运算提前做了转置，变为列向量
-
+        self.y_train = np.asmatrix(trainLabelList).T  # 训练标签集，为了方便后续运算提前做了转置，变为列向量
         self.m, self.n = np.shape(self.trainDataMat)  # m：训练集数量    n：样本特征数目
         self.gamma = gamma  # 核分母中的σ，建议先使用高斯核函数,之后可以尝试其它核函数
         self.C = C  # 惩罚参数（与软间隔支持向量机相关）
-        self.epsilon = toler  # 松弛变量，为0即硬间隔支持向量机
-
+        self.epsilon = epsilon  # 松弛变量，为0即硬间隔支持向量机
         self.k = self.calcKernel()  # 核函数对应的gram矩阵（初始化时提前计算）
         self.b = 0  # SVM中的偏置b
+        self.b_low = None
+        self.b_up = None
         self.alpha = [0] * self.trainDataMat.shape[0]  # α 拉格朗日因子，其长度为训练集数目
-        self.E = [0 * self.trainLabelMat[i, 0] for i in range(self.trainLabelMat.shape[0])]  # SMO运算过程中的Ei
+        self.E = [0 * self.y_train[i, 0] for i in range(self.y_train.shape[0])]  # SMO运算过程中的Ei
         self.supportVecIndex = []  # 支持向量的对应索引
         self.maxIter = maxIter  # 最大迭代次数
     def calcKernel(self):
@@ -41,8 +41,6 @@ class SVM:
 
         # k[i][j] = Xi * Xj，X为训练或测试数据
         # 书中7.90式中的k(xi, xj) = φ(xi) * φ(xj)
-        # 简化代码的提示：核函数矩阵是对称矩阵。
-        # 需要学生做补充。
         k = [[0 for i in range(self.m)] for j in range(self.m)]
         for i in range(self.m):
             xi = self.trainDataMat[i, :]
@@ -60,12 +58,9 @@ class SVM:
             True：满足
             False：不满足
         """
-        gi = self.calc_gxi(i)
-        if 0 < self.alpha[i] < self.C and abs(self.alpha[i]*(self.trainLabelMat[i]*gi - 1)) <= self.epsilon:
-            return True
-        if self.alpha[i] == 0 and self.trainLabelMat[i] * gi >= 1-self.epsilon:
-            return True
-        if self.alpha[i] == self.C and self.trainLabelMat[i] * gi <= 1+self.epsilon:
+        Ei = self.calcEi(i)
+        r = self.y_train[i] * Ei
+        if (r < -self.epsilon and self.alpha[i] < self.C) or (r > self.epsilon and self.alpha[i] > 0):
             return True
         return False
 
@@ -90,8 +85,8 @@ class SVM:
         gxi = 0
         index = [i for i, alpha in enumerate(self.alpha) if alpha != 0]
         for j in index:
-            gxi += self.alpha[j] * self.trainLabelMat[j] * self.k[j][i]
-        gxi += self.b  # 返回g(xi)
+            gxi += self.alpha[j] * self.y_train[j] * self.k[j][i]
+        gxi -= self.b  # 返回g(xi)
         return gxi
 
     def calcEi(self, i):
@@ -102,8 +97,7 @@ class SVM:
         """
         # 计算g(xi)
         gxi = self.calc_gxi(i)
-        # Ei = g(xi) - yi,直接将结果作为Ei返回
-        return gxi - self.trainLabelMat[i]
+        return gxi - self.y_train[i]
 
     def getAlphaJ(self, E1, i):
         """
@@ -135,7 +129,7 @@ class SVM:
         # ------------------------------------------------------
 
         # 获得Ei非0的对应索引组成的列表，列表内容为非0Ei的下标i
-        E_tmp = [i for i, Ei in enumerate(self.E)if Ei != 0]
+        E_tmp = [i for i, Ei in enumerate(self.E) if Ei != 0]
         # 对每个非零Ei的下标i进行遍历
         for j in E_tmp:
             """
@@ -176,15 +170,14 @@ class SVM:
         #  如果没有达到限制的迭代次数以及上次迭代中有参数改变则继续迭代
         # parameterChanged==0时表示上次迭代没有参数改变，如果遍历了一遍都没有参数改变，说明
         # 达到了收敛状态，可以停止了
-        flag = True
-        while parameterChanged > 0 and flag:
+        examine_all = True
+        while parameterChanged > 0:
             # 打印当前迭代轮数
             print('iter:%d:%d' % (iterStep, self.maxIter))
             # 迭代步数加1
             iterStep += 1
             # 新的一轮将参数改变标志位重新置0
             parameterChanged = 0
-            flag = False
             # 大循环遍历所有样本，用于找SMO中第一个变量
             for i in range(self.m):
                 # 查看第一个遍历是否满足KKT条件，如果不满足则作为SMO中第一个变量从而进行优化
@@ -199,8 +192,8 @@ class SVM:
                     E2, j = self.getAlphaJ(E1, i)
 
                     # 获得两个变量的标签
-                    y1 = self.trainLabelMat[i]
-                    y2 = self.trainLabelMat[j]
+                    y1 = self.y_train[i]
+                    y2 = self.y_train[j]
                     # 复制α值作为old值
                     alphaOld_1 = self.alpha[i]
                     alphaOld_2 = self.alpha[j]
@@ -214,25 +207,30 @@ class SVM:
                     # 如果两者相等，说明该变量无法再优化，直接跳到下一次循环
                     if L == H:
                         continue
-
-                    # 计算α的新值
                     # 先获得几个k值，用来计算7.106中的分母η
                     k11 = self.k[i][i]
                     k22 = self.k[j][j]
                     k21 = self.k[j][i]
                     k12 = self.k[i][j]
-                    # 更新α2，该α2还未经剪切
-                    alphaNew_2 = alphaOld_2 + y2 * (E1 - E2) / (k11 + k22 - 2 * k12)
-                    # 剪切α2
-                    if alphaNew_2 < L:
-                        alphaNew_2 = L
-                    elif alphaNew_2 > H:
-                        alphaNew_2 = H
+                    eta = k11 + k22 - 2 * k12
+                    if eta > 0:
+                        # 更新α2，该α2还未经剪切
+                        alphaNew_2 = alphaOld_2 + y2 * (E1 - E2) / eta
+                        # 剪切α2
+                        if alphaNew_2 < L:
+                            alphaNew_2 = L
+                        elif alphaNew_2 > H:
+                            alphaNew_2 = H
+                    else :
+                        Lobj = self.compute_obj(L, i, j)
+                        Hobj = self.compute_obj(H, i, j)
+                        if Lobj < Hobj - 0.00001:
+                            alphaNew_2 = L
+                        elif Lobj > Hobj + 0.00001:
+                            alphaNew_2 = H
+                        else:
+                            alphaNew_2 = alphaOld_2
 
-                    if alphaNew_2 < 1e-8:
-                        alphaNew_2 = 0
-                    elif alphaNew_2 > (self.C - 1e-8):
-                        alphaNew_2 = self.C
 
                     # 更新α1
                     alphaNew_1 = alphaOld_1 + y1 * y2 * (alphaOld_2 - alphaNew_2)
@@ -261,7 +259,7 @@ class SVM:
 
                     # 如果α2的改变量过于小，就认为该参数未改变，不增加parameterChanged值
                     # 反之则自增1
-                    if np.abs(alphaNew_2 - alphaOld_2) >= 0.00001:
+                    if np.abs(alphaNew_2 - alphaOld_2) >= self.epsilon*(alphaNew_2 + alphaOld_2 + self.epsilon):
                         parameterChanged += 1
 
                 # 打印迭代轮数，i值，该迭代轮数修改α数目
@@ -301,9 +299,9 @@ class SVM:
             # 先单独将核函数计算出来
             tmp = self.calcSinglKernel(self.trainDataMat[i, :], np.asmatrix(x))
             # 对每一项子式进行求和，最终计算得到求和项的值
-            result += self.alpha[i] * self.trainLabelMat[i] * tmp
+            result += self.alpha[i] * self.y_train[i] * tmp
         # 求和项计算结束后加上偏置b
-        result += self.b
+        result -= self.b
         # 使用sign函数返回预测结果
         return np.sign(result)
 
@@ -332,7 +330,7 @@ if __name__ == '__main__':
 
     # 获取数据集及标签
     print('start read DataSet')
-    X, Y = load_svmlight_file('german.numer_scale.txt')
+    X, Y = load_svmlight_file('heart.txt')
     X = X.toarray()
     #划分70%做训练集
     X_train = X[:int(0.7 * X.shape[0])]
@@ -345,7 +343,7 @@ if __name__ == '__main__':
     # 初始化SVM类
     print('start init SVM')
     # 通过实际实验，修改各参数的值，以达到最好的实验效果
-    svm = SVM(X_train, Y_train, 1 / X_train.shape[1], 10, 0.001,10)
+    svm = SVM(X_train, Y_train, 1 / X_train.shape[1], 10, 0.001,3000)
 
     # 开始训练
     print('start to train')

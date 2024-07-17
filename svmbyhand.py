@@ -1,150 +1,170 @@
+import numpy as np
 from sklearn.datasets import load_svmlight_file
 import numpy as np
-from math import fabs
 import time
-import os
-import random
-
-
-
-def cal_K(xi, xj):
+def kernel(x, y):
     global gamma
-    return np.exp(-1*gamma * np.linalg.norm(xi - xj)**2)
+    if np.ndim(x) == 1 and np.ndim(y) == 1:
+        result = np.exp(- gamma*(np.linalg.norm(x - y, 2)) ** 2)
+    elif (np.ndim(x) > 1 and np.ndim(y) == 1) or (np.ndim(x) == 1 and np.ndim(y) > 1):
+        result = np.exp(- gamma*(np.linalg.norm(x - y, 2, axis=1) ** 2))
+    elif np.ndim(x) > 1 and np.ndim(y) > 1:
+        result = np.exp(- gamma*(np.linalg.norm(x[:, np.newaxis] - y[np.newaxis, :], 2, axis=2) ** 2))
+    return result
 
 
-def cal_g(i):
-    global b
-    global alpha
-    gxi = b
-    index = [i for i, alpha in enumerate(alpha) if alpha != 0]
-    for j in index:
-        gxi += alpha[j] * y_train[j] * K[j][i]
-    return gxi
+def takeStep(i1, i2):
+    global alpha, b, E, C, eps, X_train, Y_train
+    if i1 == i2:
+        return 0
 
-def cal_E(i):
-    return cal_g(i) - y_train[i]
+    alph1 = alpha[i1]
+    y1 = Y_train[i1]
+    E1 = E[i1]
 
-# KKT条件
-def KKT(i,C):
-    global alpha
-    global epsilon
-    gi = cal_g(i)
-    if alpha[i] == 0 and y_train[i] * gi >= 1:
-        return True
-    elif 0 < alpha[i] < C and abs(y_train[i] * gi-1) < epsilon:
-        return True
-    elif alpha[i] == C and y_train[i] * gi <= 1:
-        return True
-    return False
+    alph2 = alpha[i2]
+    y2 = Y_train[i2]
+    E2 = E[i2]
+
+    s = y1 * y2
+
+    if y1 != y2:
+        L = max(0, alph2 - alph1)
+        H = min(C, C + alph2 - alph1)
+    else:
+        L = max(0, alph2 + alph1 - C)
+        H = min(C, alph2 + alph1)
+
+    if L == H:
+        return 0
+
+    k11 = kernel(X_train[i1], X_train[i1])
+    k12 = kernel(X_train[i1], X_train[i2])
+    k22 = kernel(X_train[i2], X_train[i2])
+
+    eta = k11 + k22 - 2 * k12
+
+    if eta > 0:
+        a2 = alph2 + (y2 * (E1 - E2)) / eta
+        if a2 < L:
+            a2 = L
+        elif a2 > H:
+            a2 = H
+    else:
+        alpha_tmp = alpha.copy()
+
+        alpha_tmp[i2] = L
+        L_obj = objective_function(alpha_tmp, Y_train, X_train)  # Objective function at a2=L
+
+        alpha_tmp[i2] = H
+        H_obj = objective_function(alpha_tmp, Y_train, X_train)  # Objective function at a2=H
+
+        if L_obj < H_obj - eps:
+            a2 = L
+        elif L_obj > H_obj + eps:
+            a2 = H
+        else:
+            a2 = alph2
+
+    if a2 < eps:
+        a2 = 0
+    elif a2 > C-eps:
+        a2 = C
+
+    if abs(a2 - alph2) < eps * (a2 + alph2 + eps):
+        return 0
+
+    a1 = alph1 + s * (alph2 - a2)
 
 
-# 内层循环，选择使|Ei - Ej|最大的点
-def selectJ(E1, i):
-    E2 = 0
-    maxE1_E2 = -1
-    maxIndex = -1
-    nozeroE = [i for i, Ei in enumerate(E) if Ei != 0]
-    # 对每个非零Ei的下标i进行遍历
-    for j in nozeroE:
-        # 如果是第一个变量的下标，跳过，因为第一个变量α1在前面已经确定
-        if j == i:
-            continue
-        # 计算E2
-        E2_tmp = cal_E(j)
-        # 如果|E1-E2|大于目前最大值
-        if fabs(E1 - E2_tmp) > maxE1_E2:
-            # 更新最大值
-            maxE1_E2 = fabs(E1 - E2_tmp)
-            # 更新最大值E2
-            E2 = E2_tmp
-            # 更新最大值E2的索引j
-            maxIndex = j
-    # 如果列表中没有非0元素了（对应程序最开始运行时的情况）
-    if maxIndex == -1:
-        maxIndex = i
-        while maxIndex == i:
-            # 获得随机数，如果随机数与第一个变量的下标i一致则重新随机
-            maxIndex = int(random.uniform(0, X_train.shape[0]))
-        # 获得E2
-        E2 = cal_E(maxIndex)
+    # 更新threshold
+    b1 = E1 + y1 * (a1 - alph1) * k11 + y2 * (a2 - alph2) * k12 + b
+    b2 = E2 + y1 * (a1 - alph1) * k12 + y2 * (a2 - alph2) * k22 + b
 
-    # 返回第二个变量的E2值以及其索引
-    return E2, maxIndex
+    if 0 < a1 < C:
+        b_new = b1
+    elif 0 < a2 < C:
+        b_new = b2
+    else:
+        b_new = (b1 + b2) / 2.0
+
+    # 更新alpha
+    alpha[i1] = a1
+    alpha[i2] = a2
+    # 更新E
+    for index, alph in zip([i1, i2], [a1, a2]):
+        if 0.0 < alph < C:
+            E[index] = 0.0
+
+    NonOpt = list(filter(lambda n: n != i1 and n != i2, list(range(len(alpha)))))
+    E[NonOpt] = (E[NonOpt] + y1 * (a1 - alph1) * kernel(X_train[i1], X_train[NonOpt]) +
+                 y2 * (a2 - alph2) * kernel(X_train[i2], X_train[NonOpt]) + b - b_new)
+
+    # 更新b
+    b = b_new
+    return 1
 
 
-def SMO(C, max_iter=1000):
-    # 初始化
-    iter = 0
-    global S
-    flag = True
-    global b
-    global alpha
-    while flag:
-        print('iter:', iter+1)
-        flag = False
-        # 外层循环，选择违反KKT条件的点
-        for i in range(X_train.shape[0]):
-            if KKT(i, C)== False:
-                Ei = cal_E(i)
-                flag = True
-                # 内层循环，选择使|Ei - Ej|最大的点
-                Ej, j = selectJ(Ei, i)
+def examineExample(i2):
+    global alpha, b, E, C, tol, X_train, Y_train
+    y2 = Y_train[i2]
+    alph2 = alpha[i2]
+    E2 = E[i2]
+    i1 = 0
+    r2 = E2 * y2
 
-                alpha_i_old = alpha[i]
-                alpha_j_old = alpha[j]
-                if y_train[i] != y_train[j]:
-                    L = max(0, alpha[j] - alpha[i])
-                    H = min(C, C + alpha[j] - alpha[i])
-                elif y_train[i] == y_train[j]:
-                    L = max(0, alpha[j] + alpha[i] - C)
-                    H = min(C, alpha[j] + alpha[i])
+    if (r2 < -tol and alph2 < C) or (r2 > tol and alph2 > 0):
 
-                if L == H:
-                    continue
+        if len([i for i in range(len(alpha)) if 0 < alpha[i] < C]) > 1:
+            # 暂定策略
+            if E2 > 0:
+                i1 = np.argmin(E)
+            elif E2 <= 0:
+                i1 = np.argmax(E)
 
-                eta = K[i][i] + K[j][j] - 2 * K[i][j]
-                if eta <= 0:
-                    continue
+            if takeStep(i1, i2):
+                return 1
 
-                alpha[j] = alpha_j_old + y_train[j] * (E[i] - E[j]) / eta
-                # 裁剪
-                if alpha[j] > H:
-                    alpha[j] = H
-                elif alpha[j] < L:
-                    alpha[j] = L
-                alpha[i] = alpha_i_old + y_train[i] * y_train[j] * (alpha_j_old - alpha[j])
+        for i1 in np.roll(np.where((alpha != 0) & (alpha != C))[0],np.random.choice(np.arange(len(alpha)))):
+            if takeStep(i1, i2):
+                return 1
 
-                # 更新b
-                b1 =b - E[i] - y_train[i] * (alpha[i] - alpha_i_old) * K[i][i] - y_train[j] * (alpha[j] - alpha_j_old) * K[j][i]
-                b2 =b - E[j] - y_train[i] * (alpha[i] - alpha_i_old) * K[i][j] - y_train[j] * (alpha[j] - alpha_j_old) * K[j][j]
+        for i1 in np.roll(np.arange(len(alpha)), np.random.choice(np.arange(len(alpha)))):
+            if takeStep(i1, i2):
+                return 1
+
+    return 0
+
+
+
+def main_routine(y_train, x_train):
+    numChanged = 0
+    examineAll = 1
+
+    while numChanged > 0 or examineAll:
+        numChanged = 0
+        if examineAll:
+            for i in range(len(y_train)):
+                numChanged += examineExample(i)
+        else:
+            for i in np.where((alpha != 0) & (alpha != C))[0]:
                 if 0 < alpha[i] < C:
-                    b = b1
-                elif 0 < alpha[j] < C:
-                    b = b2
-                else:
-                    b = (b1 + b2) / 2.0
+                    numChanged += examineExample(i)
 
-                # 更新E
-                E[i] = cal_E(i)
-                E[j] = cal_E(j)
-        iter += 1
-    for i in range(X_train.shape[0]):
-        if 0 < alpha[i]:
-            S.append(i)
-    return alpha, b, S
+        if examineAll:
+            examineAll = 0
+        elif numChanged == 0:
+            examineAll = 1
 
-
-
-def predict(alpha, b):
-    global S
-    y_predict = np.zeros(X_test.shape[0])
-    for i in range(X_test.shape[0]):
-        tmp = b
-        for j in S:
-            tmp += alpha[j] * y_train[j] * K2[i][j]
-        y_predict[i] = np.sign(tmp)
-    return y_predict
-
+def predict(x_test):
+    result = np.zeros(x_test.shape[0])
+    for i,test in enumerate(x_test):
+        result[i] = decision_function(Y_train, X_train, test)
+        if result[i] > 0:
+            result[i] = 1
+        else:
+            result[i] = -1
+    return result
 
 def accuracy(y_test, y_predict):
     count = 0
@@ -153,42 +173,34 @@ def accuracy(y_test, y_predict):
             count += 1
     return count/len(y_test)
 
+def objective_function(alph, y, x):
+    return np.sum(alph) - 0.5 * np.sum((y[:, None] * y[None, :]) * kernel(x, x) * (alph[:, None] * alph[None, :]))
+
+def decision_function(y, x_train, x_test):
+    result = (alpha * y) @ kernel(x_train, x_test) - b
+    return result
+
 
 
 if __name__ == '__main__':
-    # 读取数据
-    X, Y = load_svmlight_file('german.numer_scale.txt')
-    X = X.toarray()
-    # 划分70%做训练集
-    X_train = X[:int(0.7 * X.shape[0])]
-    y_train = Y[:int(0.7 * Y.shape[0])]
-
-    # 30%做测试集
-    X_test = X[int(0.7 * X.shape[0]):]
-    y_test = Y[int(0.7 * Y.shape[0]):]
-
-    epsilon = 0.001
     t0 = time.time()
-    gamma = 1 / X_train.shape[1]
-    alpha = np.zeros(X_train.shape[0])
-    # 初始化b为全局变量
+    np.random.seed(0)
+    eps = 1e-7
+    tol = 0.001
     b = 0
-    S = []
+    C = 10
 
-    K = np.zeros((X_train.shape[0], X_train.shape[0]))
-    for i in range(X_train.shape[0]):
-        for j in range(X_train.shape[0]):
-            K[i][j] = cal_K(X_train[i], X_train[j])
+    X_train, Y_train = load_svmlight_file('splice.txt')
+    X_train = X_train.toarray()
 
-    K2 = np.zeros((X_test.shape[0], X_train.shape[0]))
-    for i in range(X_test.shape[0]):
-        for j in range(X_train.shape[0]):
-            K2[i][j] = cal_K(X_test[i], X_train[j])
+    X_test, Y_test = load_svmlight_file('splice.t')
+    X_test = X_test.toarray()
 
-    E = np.zeros(X_train.shape[0])
+    alpha = np.zeros(len(Y_train))
+    gamma = 0.016666666666666666
+    E = decision_function(Y_train, X_train, X_train) - Y_train
 
-    alpha, b, S = SMO(10, 20000)
-
-    y_predict = predict(alpha, b)
-    print(accuracy(y_test, y_predict))
-    print('time:', time.time() - t0)
+    main_routine(Y_train, X_train)
+    y_predict = predict(X_test)
+    print(accuracy(Y_test, y_predict))
+    print(f'Time: {time.time() - t0:.2f}s')

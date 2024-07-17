@@ -3,15 +3,13 @@ from sklearn.svm import SVC
 import numpy as np
 import time
 # 读取数据
-X, Y = load_svmlight_file('german.numer_scale.txt')
-X = X.toarray()
-#划分70%做训练集
-X_train = X[:int(0.7 * X.shape[0])]
-y_train = Y[:int(0.7 * Y.shape[0])]
 
-# 30%做测试集
-X_test = X[int(0.7 * X.shape[0]):]
-y_test = Y[int(0.7 * Y.shape[0]):]
+X_train, Y_train = load_svmlight_file('splice.txt')
+X_train = X_train.toarray()
+
+X_test, y_test = load_svmlight_file('splice.t')
+X_test = X_test.toarray()
+
 epsilon = 0.001
 t0 = time.time()
 from sklearn.model_selection import GridSearchCV
@@ -44,7 +42,7 @@ print('accuracy:', accuracy)
 model = SVC(C=10, gamma=1/X_train.shape[1], kernel='rbf', max_iter=4000) # gamma = scale,表示
 gamma = 1 / X_train.shape[1]
 print(gamma)
-model.fit(X_train, y_train)
+model.fit(X_train, Y_train)
 y_pred = model.predict(X_test)
 accuracy = np.sum(y_pred == y_test) / y_test.shape[0]
 print('accuracy:', accuracy)
